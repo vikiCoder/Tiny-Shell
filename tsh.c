@@ -151,7 +151,7 @@ int main(int argc, char **argv)
 
     exit(0); /* control never reaches here */
 }
-  
+
 /* 
  * eval - Evaluate the command line that the user has just typed in
  * 
@@ -165,6 +165,33 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
+	char **argv = (char **)malloc(MAXLINE);
+	int bg = parseline(cmdline, argv);
+
+	if(argv[0] == NULL)
+		return;
+
+	if(!builtin_cmd(argv)){
+		pid_t pid;
+
+		if((pid=fork()) == 0){
+			setpgid(0, 0);
+			execvp(argv[0], argv);
+			printf("No Command found.\n");
+			exit(0);
+		}
+			
+		int stat = bg ? BG : FG;
+		addjob(jobs, pid, stat, cmdline);
+		struct job_t *job = getjobpid(jobs, pid);
+
+		if(!bg){
+			waitfg(pid);
+		}else
+			printf("[%d] (%d) %s", job->jid, job->pid, job->cmdline);
+
+	}
+
     return;
 }
 
@@ -229,8 +256,23 @@ int parseline(const char *cmdline, char **argv)
  * builtin_cmd - If the user has typed a built-in command then execute
  *    it immediately.  
  */
-int builtin_cmd(char **argv) 
+int builtin_cmd(char **argv)
 {
+	if(strcmp(argv[0], "quit") == 0){
+		exit(0);
+	}else if(strcmp(argv[0], "jobs") == 0){
+		listjobs(jobs);
+		return 1;
+	}else if(strcmp(argv[0], "bg") == 0){
+		do_bgfg(argv);
+		return 1;
+	}else if(strcmp(argv[0], "fg") == 0){
+		do_bgfg(argv);
+		return 1;
+	}else if(strcmp(argv[0], "&") == 0){
+		return 1;
+	}
+
     return 0;     /* not a builtin command */
 }
 
@@ -239,6 +281,43 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
+	if(argv[1] == NULL){
+			printf("%s command requires PID or %%jobid argument\n", argv[0]);
+			return;
+	}
+
+	pid_t pid = 0;
+	int jid = 0, isGivenJid = argv[1][0]=='%';
+	struct job_t *job;
+
+	if(isGivenJid)
+		sscanf(argv[1]+1, "%d", &jid);
+	else
+		sscanf(argv[1], "%d", &pid);
+
+	if(pid)
+		job = getjobpid(jobs, pid);
+	else
+		job = getjobjid(jobs, jid);
+
+	if(job == NULL){
+		if(isGivenJid)
+			printf("%%%d: No such job\n", jid);
+		else
+			printf("(%d): No such process\n", pid);
+		return;
+	}
+
+	if(job->state == ST)
+			kill(job->pid, SIGCONT);
+
+	if(strcmp(argv[0], "fg") == 0){
+		job->state = FG;
+		waitfg(job->pid);
+	}else{
+		job->state = BG;
+	}
+	
     return;
 }
 
@@ -247,6 +326,10 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+	volatile struct job_t *job = getjobpid(jobs, pid);
+
+	while(job->state == FG);
+
     return;
 }
 
@@ -263,6 +346,24 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+	struct job_t *job = NULL;
+	int status;
+	pid_t pid;
+
+	while((pid = waitpid(-1, &status, WNOHANG|WUNTRACED)) > 0){
+		job = getjobpid(jobs, pid);
+
+		if(WIFEXITED(status)){
+			deletejob(jobs, pid);
+		}else if(WIFSIGNALED(status)){
+			printf("Job [%d] (%d) terminated by signal %d\n", job->jid, job->pid, WTERMSIG(status));
+			deletejob(jobs, pid);
+		}else if(WIFSTOPPED(status)){
+			printf("Job [%d] (%d) stopped by signal %d\n", job->jid, job->pid, WSTOPSIG(status));
+			job->state = ST;
+		}
+	}
+
     return;
 }
 
@@ -273,6 +374,9 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+	int fgPid = fgpid(jobs);
+	if(fgPid)
+		kill(-fgPid, SIGINT);
     return;
 }
 
@@ -283,6 +387,9 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+	int fgPid = fgpid(jobs);
+	if(fgPid)
+		kill(-fgPid, SIGTSTP);
     return;
 }
 
