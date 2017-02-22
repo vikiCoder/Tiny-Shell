@@ -166,10 +166,14 @@ int main(int argc, char **argv)
 void eval(char *cmdline) 
 {
 	char **argv = (char **)malloc(MAXLINE);
+	char tmpcmdline[MAXLINE];
+	strcpy(tmpcmdline, cmdline);
 	int bg = parseline(cmdline, argv);
 
 	if(argv[0] == NULL)
 		return;
+
+	tmpcmdline[ strlen(tmpcmdline)-1 ] = '\0';
 
 	if(!builtin_cmd(argv)){
 		pid_t pid;
@@ -177,7 +181,7 @@ void eval(char *cmdline)
 		if((pid=fork()) == 0){
 			setpgid(0, 0);
 			execvp(argv[0], argv);
-			printf("No Command found.\n");
+			printf("%s: Command not found\n", tmpcmdline);
 			exit(0);
 		}
 			
@@ -290,10 +294,17 @@ void do_bgfg(char **argv)
 	int jid = 0, isGivenJid = argv[1][0]=='%';
 	struct job_t *job;
 
-	if(isGivenJid)
-		sscanf(argv[1]+1, "%d", &jid);
-	else
-		sscanf(argv[1], "%d", &pid);
+	if(isGivenJid){
+		if(sscanf(argv[1]+1, "%d", &jid) != 1){
+			printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+			return;
+		}
+	}else{
+		if(sscanf(argv[1], "%d", &pid) != 1){
+			printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+			return;
+		}
+	}
 
 	if(pid)
 		job = getjobpid(jobs, pid);
@@ -308,14 +319,14 @@ void do_bgfg(char **argv)
 		return;
 	}
 
-	if(job->state == ST)
-			kill(job->pid, SIGCONT);
+	kill(-job->pid, SIGCONT);
 
 	if(strcmp(argv[0], "fg") == 0){
 		job->state = FG;
 		waitfg(job->pid);
 	}else{
 		job->state = BG;
+		printf("[%d] (%d) %s", job->jid, job->pid, job->cmdline);
 	}
 	
     return;
@@ -327,8 +338,19 @@ void do_bgfg(char **argv)
 void waitfg(pid_t pid)
 {
 	volatile struct job_t *job = getjobpid(jobs, pid);
+	int status;
 
-	while(job->state == FG);
+	if(waitpid(pid, &status, 0|WUNTRACED) > 0){
+		if(WIFEXITED(status)){
+			deletejob(jobs, pid);
+		}else if(WIFSIGNALED(status)){
+			printf("Job [%d] (%d) terminated by signal %d\n", job->jid, job->pid, WTERMSIG(status));
+			deletejob(jobs, pid);
+		}else if(WIFSTOPPED(status)){
+			printf("Job [%d] (%d) stopped by signal %d\n", job->jid, job->pid, WSTOPSIG(status));
+			job->state = ST;
+		}
+	}
 
     return;
 }
