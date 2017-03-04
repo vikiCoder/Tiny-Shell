@@ -178,7 +178,13 @@ void eval(char *cmdline)
 	if(!builtin_cmd(argv)){
 		pid_t pid;
 
+		sigset_t blockSigchild;
+		sigemptyset(&blockSigchild);
+		sigaddset(&blockSigchild, SIGCHLD);
+		sigprocmask(SIG_BLOCK, &blockSigchild, NULL);
+
 		if((pid=fork()) == 0){
+			sigprocmask(SIG_UNBLOCK, &blockSigchild, NULL);
 			setpgid(0, 0);
 			execvp(argv[0], argv);
 			printf("%s: Command not found\n", tmpcmdline);
@@ -187,6 +193,7 @@ void eval(char *cmdline)
 			
 		int stat = bg ? BG : FG;
 		addjob(jobs, pid, stat, cmdline);
+		sigprocmask(SIG_UNBLOCK, &blockSigchild, NULL);
 		struct job_t *job = getjobpid(jobs, pid);
 
 		if(!bg){
@@ -263,6 +270,15 @@ int parseline(const char *cmdline, char **argv)
 int builtin_cmd(char **argv)
 {
 	if(strcmp(argv[0], "quit") == 0){
+		int isStopped=0, i;
+		for(i=0; i<MAXJOBS; i++)
+			isStopped = isStopped || jobs[i].state == ST;
+
+		if(isStopped){
+			printf("There are stopped jobs.\n");
+			return 1;
+		}
+
 		exit(0);
 	}else if(strcmp(argv[0], "jobs") == 0){
 		listjobs(jobs);
@@ -338,19 +354,9 @@ void do_bgfg(char **argv)
 void waitfg(pid_t pid)
 {
 	volatile struct job_t *job = getjobpid(jobs, pid);
-	int status;
 
-	if(waitpid(pid, &status, 0|WUNTRACED) > 0){
-		if(WIFEXITED(status)){
-			deletejob(jobs, pid);
-		}else if(WIFSIGNALED(status)){
-			printf("Job [%d] (%d) terminated by signal %d\n", job->jid, job->pid, WTERMSIG(status));
-			deletejob(jobs, pid);
-		}else if(WIFSTOPPED(status)){
-			printf("Job [%d] (%d) stopped by signal %d\n", job->jid, job->pid, WSTOPSIG(status));
-			job->state = ST;
-		}
-	}
+	while(job!=NULL && job->state==FG)
+		sleep(1);
 
     return;
 }
