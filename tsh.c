@@ -1,3 +1,10 @@
+/*
+* Name: Premang Vikani
+* ID: 201501063
+* Email: 201501063@daiict.ac.in / premangvikani@gmail.com
+*/
+
+
 /* 
  * tsh - A tiny shell program with job control
  * 
@@ -166,14 +173,14 @@ int main(int argc, char **argv)
 void eval(char *cmdline) 
 {
 	char **argv = (char **)malloc(MAXLINE);
-	char tmpcmdline[MAXLINE];
+	char tmpcmdline[MAXLINE]; //local copy of command line
 	strcpy(tmpcmdline, cmdline);
-	int bg = parseline(cmdline, argv);
+	int bg = parseline(cmdline, argv); //will be true if a background task is requested
 
-	if(argv[0] == NULL)
+	if(argv[0] == NULL) //return if no command is given
 		return;
 
-	tmpcmdline[ strlen(tmpcmdline)-1 ] = '\0';
+	tmpcmdline[ strlen(tmpcmdline)-1 ] = '\0'; //remove trailing new line character for further printing purpose
 
 	if(!builtin_cmd(argv)){
 		pid_t pid;
@@ -181,7 +188,7 @@ void eval(char *cmdline)
 		sigset_t blockSigchild;
 		sigemptyset(&blockSigchild);
 		sigaddset(&blockSigchild, SIGCHLD);
-		sigprocmask(SIG_BLOCK, &blockSigchild, NULL);
+		sigprocmask(SIG_BLOCK, &blockSigchild, NULL); //blocking SIGCHLD signal to prevent fork/SIGCHLD race condition
 
 		if((pid=fork()) == 0){
 			sigprocmask(SIG_UNBLOCK, &blockSigchild, NULL);
@@ -275,7 +282,7 @@ int builtin_cmd(char **argv)
 			isStopped = isStopped || jobs[i].state == ST;
 
 		if(isStopped){
-			printf("There are stopped jobs.\n");
+			printf("There are stopped jobs.\n"); //give a message instead of exiting in case of stopped jobs available
 			return 1;
 		}
 
@@ -302,7 +309,7 @@ int builtin_cmd(char **argv)
 void do_bgfg(char **argv) 
 {
 	if(argv[1] == NULL){
-			printf("%s command requires PID or %%jobid argument\n", argv[0]);
+			printf("%s command requires PID or %%jobid argument\n", argv[0]); //error message if second argument is not given
 			return;
 	}
 
@@ -310,6 +317,7 @@ void do_bgfg(char **argv)
 	int jid = 0, isGivenJid = argv[1][0]=='%';
 	struct job_t *job;
 
+	//error message if second argument is in wrong formate
 	if(isGivenJid){
 		if(sscanf(argv[1]+1, "%d", &jid) != 1){
 			printf("%s: argument must be a PID or %%jobid\n", argv[0]);
@@ -322,11 +330,13 @@ void do_bgfg(char **argv)
 		}
 	}
 
+	//find job related to given jid or pid
 	if(pid)
 		job = getjobpid(jobs, pid);
 	else
 		job = getjobjid(jobs, jid);
 
+	//print message if can't find the job
 	if(job == NULL){
 		if(isGivenJid)
 			printf("%%%d: No such job\n", jid);
